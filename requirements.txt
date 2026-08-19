@@ -1,0 +1,8 @@
+requests
+xmltodict
+gigachat
+streamlit
+python-docx
+Pillow
+streamlit-drawable-canvas
+pypdf

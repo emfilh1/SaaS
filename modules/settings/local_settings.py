@@ -1,0 +1,77 @@
+"""
+Локальное сохранение настроек (ключи ИИ, вебхук Bitrix24)
+==============================================================
+
+Streamlit держит всё, что вы вводите в интерфейсе, только в памяти
+текущего сеанса — при перезапуске сервера (например, когда обновляется
+код приложения) всё стирается, и ключи/вебхук приходится вбивать заново.
+Раздражает при активной разработке, поэтому сохраняем на диск.
+
+Файл настроек (SETTINGS_FILE) содержит секреты в открытом виде — это
+нормально для личного использования на своём компьютере, но НЕЛЬЗЯ
+заливать его на GitHub или куда-либо ещё. Он уже добавлен в .gitignore.
+"""
+
+import json
+from pathlib import Path
+
+# файл настроек лежит в корне проекта (рядом с app.py), а не рядом с этим
+# файлом — модуль живёт в modules/settings/, но хранить секреты хочется
+# в одном стабильном месте независимо от того, куда переедет сам модуль
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SETTINGS_FILE = PROJECT_ROOT / ".local_settings.json"
+
+# какие ключи session_state сохраняем — только настройки интеграций,
+# не рабочие данные конкретного тендера (те и не должны переживать сеанс)
+PERSISTED_KEYS = [
+    "llm_source",
+    "yandex_api_key",
+    "yandex_folder_id",
+    "gigachat_credentials",
+    "gigachat_skip_ssl",
+    "bitrix_webhook_url",
+    "bitrix_responsible_id",
+    "bitrix_ceo_id",
+]
+
+
+def load_settings(path: Path = SETTINGS_FILE) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_settings(values: dict, path: Path = SETTINGS_FILE) -> None:
+    data = {k: v for k, v in values.items() if k in PERSISTED_KEYS}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+if __name__ == "__main__":
+    # самотест пишет во ВРЕМЕННЫЙ файл, а не в настоящий SETTINGS_FILE — тот
+    # уже может содержать настоящие сохранённые ключи пользователя, тест не
+    # должен их затирать или удалять
+    test_path = PROJECT_ROOT / ".local_settings.selftest.json"
+    demo = {
+        "llm_source": "GigaChat",
+        "gigachat_credentials": "test-key-12345",
+        "bitrix_webhook_url": "https://example.bitrix24.ru/rest/1/xxxx/",
+        "bitrix_responsible_id": 7,
+        "bitrix_ceo_id": 1,
+        "should_not_be_saved": "мусор, не из PERSISTED_KEYS",
+    }
+    save_settings(demo, path=test_path)
+    loaded = load_settings(path=test_path)
+    print("Сохранено и прочитано обратно (во временный тестовый файл):")
+    print(loaded)
+    assert loaded["gigachat_credentials"] == "test-key-12345"
+    assert loaded["bitrix_webhook_url"] == demo["bitrix_webhook_url"]
+    assert "should_not_be_saved" not in loaded, "лишние ключи не должны сохраняться"
+    print("\nПроверка пройдена.")
+
+    test_path.unlink()
+    print("Временный тестовый файл удалён — настоящий файл настроек (если есть) не тронут.")
