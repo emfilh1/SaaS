@@ -1,4 +1,5 @@
 .local_settings.json
+.local_dev_marker
 __pycache__/
 *.pyc
 .DS_Store
