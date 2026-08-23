@@ -805,6 +805,9 @@ with tab_pricing:
         for i, item in enumerate(ai_items):
             st.session_state[f"price_item_name_{i}"] = item.name
             st.session_state[f"price_item_amount_{i}"] = int(item.amount)
+        # цифры пришли от ИИ, не из расчёта — дальше по вкладкам (Документы,
+        # После победы) их нельзя использовать без явного подтверждения человеком
+        st.session_state["price_source_is_ai"] = True
 
     # автозапуск: как только на вкладке "Разбор документации" появились новые
     # требования тендера, черновая оценка сама подставляется здесь — не нужно
@@ -844,7 +847,6 @@ with tab_pricing:
     estimate = None
     try:
         estimate = calculate_price(cost_items, margin_percent, price_nmck or None)
-        st.session_state["last_estimated_price"] = estimate.suggested_price
         st.divider()
         st.subheader("Результат")
         pc5, pc6, pc7 = st.columns(3)
@@ -858,7 +860,19 @@ with tab_pricing:
             st.warning(estimate.antidemping_warning)
         elif estimate.nmck:
             st.success("Антидемпинговые меры при этой цене не включаются.")
-        st.info("➡️ **Дальше:** вкладка «📝 Документы» — собрать бланки для подачи.")
+
+        if st.session_state.get("price_source_is_ai"):
+            st.warning(
+                "🤖 Статьи затрат — черновая прикидка ИИ, не расчёт. Эта цена **не передана** на вкладки "
+                "«Документы» и «После победы», пока вы её не подтвердите."
+            )
+            if st.button("✅ Подтвердить цифры и передать дальше", key="price_confirm_ai"):
+                st.session_state["last_estimated_price"] = estimate.suggested_price
+                st.session_state["price_source_is_ai"] = False
+                st.rerun()
+        else:
+            st.session_state["last_estimated_price"] = estimate.suggested_price
+            st.info("➡️ **Дальше:** вкладка «📝 Документы» — собрать бланки для подачи.")
     except ValueError as e:
         st.error(str(e))
 

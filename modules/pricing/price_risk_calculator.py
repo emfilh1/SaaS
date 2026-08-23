@@ -128,28 +128,69 @@ def calculate_antidemping(
 
 
 if __name__ == "__main__":
-    # Контрольный пример из реального разбора юристов (сверено с источником):
+    # Контрольные примеры с известным ответом. Каждый подобран так, чтобы
+    # проверять свою часть формулы по отдельности — если поменять любую
+    # константу (25%, 15 млн, 1.5×, 10%, max/min) хотя бы один пример
+    # сломается. Это и есть "проверка с режимом порчи": тест бесполезен,
+    # если он проходит одинаково что с правильной, что с испорченной
+    # формулой — здесь такого нет ни у одного примера.
+
+    # 1) Контрольный пример из реального разбора юристов (сверено с источником):
     # НМЦК 6 000 000, обеспечение в извещении 300 000, снижение 28% ->
     # ожидаемый ответ: 600 000 (10% от НМЦК больше, чем 1.5 × 300 000 = 450 000)
-    result = calculate_antidemping(
-        nmck=6_000_000,
-        notice_security_amount=300_000,
-        proposed_price=6_000_000 * 0.72,  # снижение на 28%
-    )
-    print("=== Контрольный пример (НМЦК 6 млн, снижение 28%) ===")
-    print(result)
-    expected = 600_000
-    actual = result.required_security_options[0]["required_security"]
-    assert actual == expected, f"Ошибка расчёта: ожидали {expected}, получили {actual}"
-    print(f"\nПроверка пройдена: обеспечение = {actual} ₽ (ожидали {expected} ₽)")
+    r1 = calculate_antidemping(nmck=6_000_000, notice_security_amount=300_000, proposed_price=6_000_000 * 0.72)
+    assert r1.triggered is True
+    assert r1.nmck_bracket == "до_15млн"
+    assert r1.required_security_options[0]["required_security"] == 600_000, "10% от НМЦК должен победить 1.5×обеспечение"
 
-    print("\n=== Пример НМЦК ≤ 15 млн, добросовестность неизвестна ===")
-    result2 = calculate_antidemping(
-        nmck=8_000_000,
-        notice_security_amount=200_000,
-        proposed_price=8_000_000 * 0.70,  # снижение на 30%
-    )
-    print(result2)
+    # 2) Тот же порог, но со связывающим 1.5×обеспечение (не 10% от НМЦК) —
+    # если бы в формуле max() был заменён на min(), или 1.5 на 1.0, эта
+    # проверка провалится, а пример (1) её не заметит.
+    r2 = calculate_antidemping(nmck=6_000_000, notice_security_amount=1_000_000, proposed_price=6_000_000 * 0.72)
+    assert r2.required_security_options[0]["required_security"] == 1_500_000, "1.5×обеспечение (1.5 млн) должно победить 10% от НМЦК (600 тыс)"
+
+    # 3) Связывающий член — сумма аванса, а не обеспечение/НМЦК.
+    r3 = calculate_antidemping(nmck=6_000_000, notice_security_amount=300_000, proposed_price=6_000_000 * 0.72, advance_amount=700_000)
+    assert r3.required_security_options[0]["required_security"] == 700_000, "аванс (700 тыс) должен победить и 1.5×обеспечение, и 10% от НМЦК"
+
+    # 4) НМЦК строго выше 15 млн — обязательное повышенное обеспечение, аванс запрещён.
+    r4 = calculate_antidemping(nmck=20_000_000, notice_security_amount=500_000, proposed_price=20_000_000 * 0.70)
+    assert r4.nmck_bracket == "свыше_15млн"
+    assert r4.required_security_options[0]["required_security"] == 2_000_000, "10% от 20 млн = 2 млн должно победить 1.5×500 тыс = 750 тыс"
+    assert r4.advance_allowed is False, "при НМЦК > 15 млн аванс обязан быть запрещён"
+    assert len(r4.required_security_options) == 1, "при НМЦК > 15 млн выбора вариантов быть не должно"
+
+    # 5) Граница ровно 25% — порог включительный ("снижение 25% и более").
+    r5 = calculate_antidemping(nmck=1_000_000, notice_security_amount=100_000, proposed_price=750_000)
+    assert r5.discount_percent == 25.0
+    assert r5.triggered is True, "снижение ровно 25% обязано включать антидемпинг (порог включительный)"
+
+    # 6) Чуть ниже границы — антидемпинг не должен включаться.
+    r6 = calculate_antidemping(nmck=1_000_000, notice_security_amount=100_000, proposed_price=750_100)
+    assert r6.triggered is False, "снижение 24.99% не должно включать антидемпинг"
+
+    # 7) Ветки подтверждения добросовестности для НМЦК ≤ 15 млн: True/False/None
+    # должны давать три разных состояния варианта 2, а не молча совпадать.
+    common = dict(nmck=8_000_000, notice_security_amount=200_000, proposed_price=8_000_000 * 0.70)
+    r7_true = calculate_antidemping(**common, has_three_qualifying_contracts=True)
+    r7_false = calculate_antidemping(**common, has_three_qualifying_contracts=False)
+    r7_none = calculate_antidemping(**common, has_three_qualifying_contracts=None)
+    assert r7_true.required_security_options[1]["eligible"] is True
+    assert r7_false.required_security_options[1]["eligible"] is False
+    assert r7_none.required_security_options[1]["eligible"] is None
+    assert r7_true.required_security_options[1]["required_security"] == 200_000, "при подтверждённой добросовестности обеспечение — как в извещении, без увеличения"
+
+    # 8) Некорректный вход должен явно падать, а не тихо считать мусор.
+    try:
+        calculate_antidemping(nmck=0, notice_security_amount=100_000, proposed_price=50_000)
+        raise AssertionError("НМЦК = 0 должна была вызвать ValueError")
+    except ValueError:
+        pass
+
+    print("Все 8 контрольных примеров (включая режим порчи) пройдены.")
+
+    print("\n=== Пример для наглядности: НМЦК ≤ 15 млн, добросовестность неизвестна ===")
+    print(r7_none)
 
 # Источники (проверено веб-поиском, август 2026):
 # - https://fz44.org/articles/antidempingovye-mery/ (подробный разбор + пример расчёта)
